@@ -11,7 +11,7 @@ st.set_page_config(page_title="Gestão Financeira Pro", layout="wide", page_icon
 
 # --- BANCO DE DADOS ---
 def init_db():
-    conn = sqlite3.connect('financeiro_v9.db', check_same_thread=False)
+    conn = sqlite3.connect('financeiro_v10.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios 
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, email TEXT UNIQUE, senha TEXT, 
@@ -31,6 +31,7 @@ st.markdown("""
     <style>
     .stButton>button { width: 100%; border-radius: 8px; background-color: #1a237e; color: white; font-weight: bold; }
     .main-header { color: #1a237e; font-weight: bold; border-bottom: 2px solid #1a237e; padding-bottom: 10px; margin-bottom: 20px; }
+    .stDownloadButton>button { background-color: #2e7d32 !important; color: white !important; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -110,28 +111,22 @@ else:
             tipo_mov = st.radio("Selecione o Fluxo", ["Entrada/Saída Comum", "🔄 Transferência entre Contas"], horizontal=True)
             
             if tipo_mov == "Entrada/Saída Comum":
-                # CAMPOS FORA DO FORM PARA REATIVIDADE INSTANTÂNEA
                 c1, c2, c3 = st.columns(3)
                 d_l = c1.date_input("Data")
                 t_l = c2.selectbox("Tipo", ["Receita", "Despesa"], key="tipo_lan")
                 b_l = c3.selectbox("Conta", banks)
                 
-                # A categoria agora atualiza na hora baseada no t_l
                 lista_filtro = recs if t_l == "Receita" else desps
                 cat_l = st.selectbox("Categoria", lista_filtro if lista_filtro else ["Nenhuma cadastrada"])
-                
                 v_l = st.number_input("Valor R$", min_value=0.0, step=0.01)
                 h_l = st.text_input("Histórico / Detalhes")
                 
                 if st.button("Confirmar Lançamento"):
-                    if not banks or not lista_filtro:
-                        st.error("Cadastre conta e categoria primeiro!")
-                    else:
-                        conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,?,?,?,?,?)", 
-                                     (st.session_state.user_id, str(d_l), t_l, cat_l, b_l, v_l, h_l))
-                        conn.commit()
-                        st.success("Lançamento efetuado!")
-                        st.rerun()
+                    conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,?,?,?,?,?)", 
+                                 (st.session_state.user_id, str(d_l), t_l, cat_l, b_l, v_l, h_l))
+                    conn.commit()
+                    st.success("Lançamento efetuado!")
+                    st.rerun()
             else:
                 c1, c2, c3 = st.columns(3)
                 d_t = c1.date_input("Data")
@@ -139,17 +134,27 @@ else:
                 destino = c3.selectbox("Entrou em (Destino)", banks)
                 v_t = st.number_input("Valor da Transferência", min_value=0.0, step=0.01)
                 if st.button("Efetuar Transferência"):
-                    if origem == destino: st.error("As contas de origem e destino não podem ser iguais.")
+                    if origem == destino: st.error("Contas iguais!")
                     else:
-                        conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,'Despesa','Transferência Saída',?,?,?)", (st.session_state.user_id, str(d_t), origem, v_t, f"Para {destino}"))
-                        conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,'Receita','Transferência Entrada',?,?,?)", (st.session_state.user_id, str(d_t), destino, v_t, f"De {origem}"))
+                        # Transferências usam uma categoria neutra para não inflar a DRE
+                        conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,'Despesa','Transferência Interna',?,?,?)", (st.session_state.user_id, str(d_t), origem, v_t, f"Para {destino}"))
+                        conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,'Receita','Transferência Interna',?,?,?)", (st.session_state.user_id, str(d_t), destino, v_t, f"De {origem}"))
                         conn.commit()
-                        st.success("Transferência realizada com sucesso!")
+                        st.success("Transferência realizada!")
                         st.rerun()
 
         with tab_edit:
             df_hist = pd.read_sql(f"SELECT * FROM lancamentos WHERE user_id={st.session_state.user_id} ORDER BY id DESC", conn)
             st.dataframe(df_hist, use_container_width=True)
+            
+            # Botão de Exportação para o Contador
+            csv = df_hist.to_csv(index=False).encode('utf-8')
+            st.download_button(
+                label="📥 Exportar Planilha para o Contador (CSV)",
+                data=csv,
+                file_name=f"lancamentos_{st.session_state.user_nome}_{date.today()}.csv",
+                mime='text/csv',
+            )
             
             st.markdown("---")
             col_e1, col_e2 = st.columns(2)
@@ -165,18 +170,16 @@ else:
                         if st.button("Salvar Alterações"):
                             conn.execute("UPDATE lancamentos SET valor=?, hist=? WHERE id=?", (new_val, new_hist, id_acao))
                             conn.commit()
-                            st.success("Alterado!")
                             st.rerun()
             elif acao == "Excluir Registro" and id_acao > 0:
-                if st.button("⚠️ Confirmar Exclusão Permanente"):
+                if st.button("⚠️ Confirmar Exclusão"):
                     conn.execute("DELETE FROM lancamentos WHERE id=? AND user_id=?", (id_acao, st.session_state.user_id))
                     conn.commit()
-                    st.warning(f"Lançamento {id_acao} removido.")
                     st.rerun()
 
     # --- TELA: DRE ---
     elif menu == "DRE/Relatórios":
-        st.markdown("<h1 class='main-header'>📊 Filtros e Resultados</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 class='main-header'>📊 Filtros e Resultados Contábeis</h1>", unsafe_allow_html=True)
         banks_f = ["Todos"] + [r[0] for r in conn.execute("SELECT nome FROM categorias WHERE user_id=? AND tipo='B'", (st.session_state.user_id,)).fetchall()]
         
         c1, c2, c3 = st.columns(3)
@@ -188,19 +191,31 @@ else:
         if not df_r.empty:
             df_r['data'] = pd.to_datetime(df_r['data']).dt.date
             filtro = (df_r['data'] >= dt_ini) & (df_r['data'] <= dt_fim)
-            if banco_sel != "Todos":
-                filtro = filtro & (df_r['conta'] == banco_sel)
+            if banco_sel != "Todos": filtro = filtro & (df_r['conta'] == banco_sel)
             
-            df_final = df_r[filtro]
-            r_t = df_final[df_final['tipo'] == 'Receita']['valor'].sum()
-            d_t = df_final[df_final['tipo'] == 'Despesa']['valor'].sum()
+            df_final = df_r[filtro].copy()
             
-            st.columns(3)[0].metric("Receitas", f"R$ {r_t:,.2f}")
-            st.columns(3)[1].metric("Despesas", f"R$ {d_t:,.2f}")
-            st.columns(3)[2].metric("Saldo", f"R$ {r_t - d_t:,.2f}")
+            # LÓGICA DE EXCLUSÃO DE TRANSFERÊNCIAS NA DRE
+            # Filtramos 'Transferência Interna' para que não conte como faturamento ou custo
+            df_contabil = df_final[df_final['categoria'] != 'Transferência Interna']
             
+            r_t = df_contabil[df_contabil['tipo'] == 'Receita']['valor'].sum()
+            d_t = df_contabil[df_contabil['tipo'] == 'Despesa']['valor'].sum()
+            
+            # Métricas Reais
+            m1, m2, m3 = st.columns(3)
+            m1.metric("Receitas Reais", f"R$ {r_t:,.2f}")
+            m2.metric("Despesas Reais", f"R$ {d_t:,.2f}")
+            m3.metric("Resultado Líquido", f"R$ {r_t - d_t:,.2f}")
+            
+            st.info("💡 Nota: Transferências internas são exibidas na tabela para conferência de saldo, mas não somam no faturamento/despesa acima.")
             st.dataframe(df_final, use_container_width=True)
-            st.bar_chart(df_final.groupby('categoria')['valor'].sum())
+            
+            # Gráfico de Categorias (Apenas despesas reais)
+            st.subheader("Distribuição de Despesas Reais")
+            df_graf = df_contabil[df_contabil['tipo'] == 'Despesa']
+            if not df_graf.empty:
+                st.bar_chart(df_graf.groupby('categoria')['valor'].sum())
 
     elif menu == "👑 Admin":
         st.markdown("<h1 class='main-header'>Painel de Licenças</h1>", unsafe_allow_html=True)
