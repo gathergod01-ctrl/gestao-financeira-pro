@@ -11,7 +11,7 @@ st.set_page_config(page_title="Gestão Financeira Pro", layout="wide", page_icon
 
 # --- BANCO DE DADOS ---
 def init_db():
-    conn = sqlite3.connect('financeiro_v8.db', check_same_thread=False)
+    conn = sqlite3.connect('financeiro_v9.db', check_same_thread=False)
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios 
                       (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, email TEXT UNIQUE, senha TEXT, 
@@ -29,9 +29,8 @@ conn = init_db()
 # --- ESTILIZAÇÃO ---
 st.markdown("""
     <style>
-    .stButton>button { width: 100%; border-radius: 8px; background-color: #1a237e; color: white; height: 3em; font-weight: bold; }
+    .stButton>button { width: 100%; border-radius: 8px; background-color: #1a237e; color: white; font-weight: bold; }
     .main-header { color: #1a237e; font-weight: bold; border-bottom: 2px solid #1a237e; padding-bottom: 10px; margin-bottom: 20px; }
-    .metric-card { background-color: #f8f9fa; padding: 15px; border-radius: 10px; border-left: 5px solid #1a237e; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -79,19 +78,20 @@ else:
         st.markdown("<h1 class='main-header'>⚙️ Configurações</h1>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
-            n_cat = st.text_input("Novo Item")
-            t_cat = st.selectbox("Tipo", ["Receita", "Despesa", "Banco/Caixa"])
-            if st.button("Salvar"):
+            st.subheader("➕ Novo Item")
+            n_cat = st.text_input("Nome do Item")
+            t_cat = st.selectbox("Tipo de Categoria", ["Receita", "Despesa", "Banco/Caixa"])
+            if st.button("Salvar Item"):
                 code = 'R' if t_cat == "Receita" else 'D' if t_cat == "Despesa" else 'B'
                 conn.execute("INSERT INTO categorias (user_id, nome, tipo) VALUES (?,?,?)", (st.session_state.user_id, n_cat, code))
                 conn.commit()
                 st.rerun()
         with c2:
-            st.subheader("Gerenciar")
+            st.subheader("🗑️ Gerenciar")
             items = pd.read_sql(f"SELECT id, nome, tipo FROM categorias WHERE user_id={st.session_state.user_id}", conn)
             st.dataframe(items, use_container_width=True)
             id_del = st.number_input("ID Categoria para remover", step=1, value=0)
-            if st.button("Remover"):
+            if st.button("Remover Categoria"):
                 conn.execute("DELETE FROM categorias WHERE id=? AND user_id=?", (id_del, st.session_state.user_id))
                 conn.commit()
                 st.rerun()
@@ -109,54 +109,70 @@ else:
         with tab_ins:
             tipo_mov = st.radio("Selecione o Fluxo", ["Entrada/Saída Comum", "🔄 Transferência entre Contas"], horizontal=True)
             
-            with st.form("form_l"):
-                if tipo_mov == "Entrada/Saída Comum":
-                    c1, c2, c3 = st.columns(3)
-                    d_l = c1.date_input("Data")
-                    t_l = c2.selectbox("Tipo", ["Receita", "Despesa"])
-                    b_l = c3.selectbox("Conta", banks)
-                    cat_l = st.selectbox("Categoria", recs if t_l == "Receita" else desps)
-                    v_l = st.number_input("Valor", min_value=0.0)
-                    h_l = st.text_input("Histórico")
-                    if st.form_submit_button("Salvar"):
-                        conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,?,?,?,?,?)", (st.session_state.user_id, str(d_l), t_l, cat_l, b_l, v_l, h_l))
+            if tipo_mov == "Entrada/Saída Comum":
+                # CAMPOS FORA DO FORM PARA REATIVIDADE INSTANTÂNEA
+                c1, c2, c3 = st.columns(3)
+                d_l = c1.date_input("Data")
+                t_l = c2.selectbox("Tipo", ["Receita", "Despesa"], key="tipo_lan")
+                b_l = c3.selectbox("Conta", banks)
+                
+                # A categoria agora atualiza na hora baseada no t_l
+                lista_filtro = recs if t_l == "Receita" else desps
+                cat_l = st.selectbox("Categoria", lista_filtro if lista_filtro else ["Nenhuma cadastrada"])
+                
+                v_l = st.number_input("Valor R$", min_value=0.0, step=0.01)
+                h_l = st.text_input("Histórico / Detalhes")
+                
+                if st.button("Confirmar Lançamento"):
+                    if not banks or not lista_filtro:
+                        st.error("Cadastre conta e categoria primeiro!")
+                    else:
+                        conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,?,?,?,?,?)", 
+                                     (st.session_state.user_id, str(d_l), t_l, cat_l, b_l, v_l, h_l))
                         conn.commit()
-                        st.success("Salvo!")
-                else:
-                    c1, c2, c3 = st.columns(3)
-                    d_t = c1.date_input("Data")
-                    origem = c2.selectbox("Saiu de (Origem)", banks)
-                    destino = c3.selectbox("Entrou em (Destino)", banks)
-                    v_t = st.number_input("Valor da Transferência", min_value=0.0)
-                    if st.form_submit_button("Efetuar Transferência"):
-                        if origem == destino: st.error("Contas iguais!")
-                        else:
-                            conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,'Despesa','Transferência Saída',?,?,?)", (st.session_state.user_id, str(d_t), origem, v_t, f"Para {destino}"))
-                            conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,'Receita','Transferência Entrada',?,?,?)", (st.session_state.user_id, str(d_t), destino, v_t, f"De {origem}"))
-                            conn.commit()
-                            st.success("Transferência realizada!")
+                        st.success("Lançamento efetuado!")
+                        st.rerun()
+            else:
+                c1, c2, c3 = st.columns(3)
+                d_t = c1.date_input("Data")
+                origem = c2.selectbox("Saiu de (Origem)", banks)
+                destino = c3.selectbox("Entrou em (Destino)", banks)
+                v_t = st.number_input("Valor da Transferência", min_value=0.0, step=0.01)
+                if st.button("Efetuar Transferência"):
+                    if origem == destino: st.error("As contas de origem e destino não podem ser iguais.")
+                    else:
+                        conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,'Despesa','Transferência Saída',?,?,?)", (st.session_state.user_id, str(d_t), origem, v_t, f"Para {destino}"))
+                        conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,'Receita','Transferência Entrada',?,?,?)", (st.session_state.user_id, str(d_t), destino, v_t, f"De {origem}"))
+                        conn.commit()
+                        st.success("Transferência realizada com sucesso!")
+                        st.rerun()
 
         with tab_edit:
             df_hist = pd.read_sql(f"SELECT * FROM lancamentos WHERE user_id={st.session_state.user_id} ORDER BY id DESC", conn)
             st.dataframe(df_hist, use_container_width=True)
-            col_e1, col_e2 = st.columns(2)
-            id_acao = col_e1.number_input("ID do Lançamento", step=1, value=0)
-            acao = col_e2.selectbox("Ação", ["---", "Excluir", "Editar"])
             
-            if acao == "Editar" and id_acao > 0:
+            st.markdown("---")
+            col_e1, col_e2 = st.columns(2)
+            id_acao = col_e1.number_input("ID do Lançamento para Alterar", step=1, value=0)
+            acao = col_e2.selectbox("Ação Desejada", ["---", "Excluir Registro", "Editar Informações"])
+            
+            if acao == "Editar Informações" and id_acao > 0:
                 item = conn.execute("SELECT * FROM lancamentos WHERE id=? AND user_id=?", (id_acao, st.session_state.user_id)).fetchone()
                 if item:
-                    with st.form("edit_form"):
+                    with st.expander("📝 Formulário de Edição", expanded=True):
                         new_val = st.number_input("Novo Valor", value=item[6])
                         new_hist = st.text_input("Novo Histórico", value=item[7])
-                        if st.form_submit_button("Salvar Edição"):
+                        if st.button("Salvar Alterações"):
                             conn.execute("UPDATE lancamentos SET valor=?, hist=? WHERE id=?", (new_val, new_hist, id_acao))
                             conn.commit()
+                            st.success("Alterado!")
                             st.rerun()
-            elif acao == "Excluir" and st.button("⚠️ Confirmar Exclusão"):
-                conn.execute("DELETE FROM lancamentos WHERE id=? AND user_id=?", (id_acao, st.session_state.user_id))
-                conn.commit()
-                st.rerun()
+            elif acao == "Excluir Registro" and id_acao > 0:
+                if st.button("⚠️ Confirmar Exclusão Permanente"):
+                    conn.execute("DELETE FROM lancamentos WHERE id=? AND user_id=?", (id_acao, st.session_state.user_id))
+                    conn.commit()
+                    st.warning(f"Lançamento {id_acao} removido.")
+                    st.rerun()
 
     # --- TELA: DRE ---
     elif menu == "DRE/Relatórios":
@@ -171,27 +187,27 @@ else:
         df_r = pd.read_sql(f"SELECT * FROM lancamentos WHERE user_id={st.session_state.user_id}", conn)
         if not df_r.empty:
             df_r['data'] = pd.to_datetime(df_r['data']).dt.date
-            f = (df_r['data'] >= dt_ini) & (df_r['data'] <= dt_fim)
-            if banco_sel != "Todos": f = f & (df_r['conta'] == banco_sel)
+            filtro = (df_r['data'] >= dt_ini) & (df_r['data'] <= dt_fim)
+            if banco_sel != "Todos":
+                filtro = filtro & (df_r['conta'] == banco_sel)
             
-            df_final = df_r[f]
+            df_final = df_r[filtro]
             r_t = df_final[df_final['tipo'] == 'Receita']['valor'].sum()
             d_t = df_final[df_final['tipo'] == 'Despesa']['valor'].sum()
             
-            col_m1, col_m2, col_m3 = st.columns(3)
-            col_m1.metric("Receitas", f"R$ {r_t:,.2f}")
-            col_m2.metric("Despesas", f"R$ {d_t:,.2f}")
-            col_m3.metric("Saldo do Período", f"R$ {r_t - d_t:,.2f}")
+            st.columns(3)[0].metric("Receitas", f"R$ {r_t:,.2f}")
+            st.columns(3)[1].metric("Despesas", f"R$ {d_t:,.2f}")
+            st.columns(3)[2].metric("Saldo", f"R$ {r_t - d_t:,.2f}")
             
             st.dataframe(df_final, use_container_width=True)
             st.bar_chart(df_final.groupby('categoria')['valor'].sum())
 
     elif menu == "👑 Admin":
-        st.markdown("<h1 class='main-header'>Admin</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 class='main-header'>Painel de Licenças</h1>", unsafe_allow_html=True)
         users = pd.read_sql("SELECT id, nome, documento, email, status FROM usuarios", conn)
         st.table(users)
-        id_atv = st.number_input("ID para Ativar", step=1)
-        if st.button("Ativar"):
+        id_atv = st.number_input("Ativar Usuário (ID)", step=1)
+        if st.button("Liberar Acesso"):
             conn.execute("UPDATE usuarios SET status='Ativo' WHERE id=?", (id_atv,))
             conn.commit()
             st.rerun()
