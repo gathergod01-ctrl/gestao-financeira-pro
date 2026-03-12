@@ -1,19 +1,13 @@
 import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
-from datetime import datetime, date, timedelta
 import urllib.parse
 
-# --- CONFIGURAÇÕES DA PÁGINA ---
-st.set_page_config(page_title="Gestão Financeira Pro", layout="wide", page_icon="📊")
+# --- CONEXÃO GABRIEL (SUPABASE) ---
+senha_real = "@H2obeta77@"
+senha_codificada = urllib.parse.quote_plus(senha_real)
 
-# --- CONEXÃO COM SUPABASE (GABRIEL) ---
-# Aqui o sistema trata sua senha com caracteres especiais automaticamente
-senha_crua = "@H2obeta77@"
-senha_codificada = urllib.parse.quote_plus(senha_crua)
-
-# Montagem da URI usando o seu host do print
-# Estamos usando o Pooler (Porta 6543) para maior estabilidade
+# Este link abaixo já usa o SEU Project ID e a SUA senha
 DB_URI = f"postgresql://postgres.xtrgfoiyqppqtocuwbqi:{senha_codificada}@aws-0-sa-east-1.pooler.supabase.com:6543/postgres"
 
 engine = create_engine(DB_URI, pool_pre_ping=True)
