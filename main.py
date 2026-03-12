@@ -29,9 +29,10 @@ if not st.session_state.logado:
     t1, t2 = st.tabs(["🔐 Acessar", "📝 Solicitar Conta"])
     
     with t1:
-        e_l = st.text_input("E-mail")
-        s_l = st.text_input("Senha", type="password")
-        if st.button("Entrar"):
+        # Adicionei keys únicas ('login_email' e 'login_senha')
+        e_l = st.text_input("E-mail", key="login_email")
+        s_l = st.text_input("Senha", type="password", key="login_senha")
+        if st.button("Entrar", key="btn_login"):
             res = supabase.table("usuarios").select("*").eq("email", e_l).eq("senha", s_l).execute()
             if res.data:
                 u = res.data[0]
@@ -42,10 +43,11 @@ if not st.session_state.logado:
             else: st.error("Login inválido.")
             
     with t2:
-        cn = st.text_input("Nome/Empresa")
-        ce = st.text_input("E-mail")
-        cs = st.text_input("Senha", type="password")
-        if st.button("Enviar"):
+        # Adicionei keys únicas ('cad_nome', 'cad_email', 'cad_senha')
+        cn = st.text_input("Nome/Empresa", key="cad_nome")
+        ce = st.text_input("E-mail comercial", key="cad_email")
+        cs = st.text_input("Senha de acesso", type="password", key="cad_senha")
+        if st.button("Enviar solicitação", key="btn_cad"):
             status = "Ativo" if ce == "gathergod01@gmail.com" else "Pendente"
             nivel = "admin" if ce == "gathergod01@gmail.com" else "cliente"
             supabase.table("usuarios").insert({"nome": cn, "email": ce, "senha": cs, "status": status, "nivel": nivel}).execute()
