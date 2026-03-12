@@ -2,15 +2,20 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import datetime, date, timedelta
+import smtplib
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
-# --- CONFIGURAÇÃO DA CONEXÃO (COLE SUA URI AQUI) ---
-# Substitua 'SUA_SENHA_AQUI' pela senha que você criou no Supabase
-DB_URI = "postgresql://postgres:[@H2obeta77@]@db.xtrgfoiyqppqtocuwbqi.supabase.co:5432/postgres"
+# --- CONFIGURAÇÕES DA PÁGINA ---
+st.set_page_config(page_title="Gestão Financeira Pro", layout="wide", page_icon="📊")
 
-# Criamos o "motor" de conexão
+# --- CONEXÃO SUPABASE (POSTGRES) ---
+# Substitua SUA_SENHA_AQUI pela senha que você definiu no projeto do Supabase
+DB_URI = "postgresql://postgres:SUA_SENHA_AQUI@db.xtrgfoiyqppqtocuwbqi.supabase.co:5432/postgres"
 engine = create_engine(DB_URI)
 
 def query_db(sql, params=None, commit=False):
+    """Função mestre para executar comandos no Supabase"""
     with engine.connect() as conn:
         result = conn.execute(text(sql), params or {})
         if commit:
@@ -19,17 +24,12 @@ def query_db(sql, params=None, commit=False):
             return result.fetchall()
         return None
 
-# A partir daqui, o restante do seu código (DRE, Lançamentos, etc) 
-# funcionará usando a função query_db em vez de conn.execute.
-
-conn = init_db()
-
 # --- ESTILIZAÇÃO ---
 st.markdown("""
     <style>
+    .stButton>button { width: 100%; border-radius: 8px; background-color: #1a237e; color: white; font-weight: bold; }
     .main-header { color: #1a237e; font-weight: bold; border-bottom: 2px solid #1a237e; padding-bottom: 10px; margin-bottom: 20px; }
-    .card-resumo { background-color: #ffffff; padding: 20px; border-radius: 10px; box-shadow: 2px 2px 10px rgba(0,0,0,0.1); border-top: 5px solid #1a237e; }
-    .vencimento-alerta { color: #d32f2f; font-weight: bold; background-color: #ffebee; padding: 10px; border-radius: 5px; }
+    .card-resumo { background-color: #ffffff; padding: 20px; border-radius: 10px; box-shadow: 2px 2px 10px rgba(0,0,0,0.1); border-top: 5px solid #1a237e; text-align: center; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -40,177 +40,141 @@ if 'logado' not in st.session_state:
 if not st.session_state.logado:
     st.markdown("<h1 style='text-align: center; color: #1a237e;'>📊 Gestão Financeira Gabriel</h1>", unsafe_allow_html=True)
     tab_login, tab_cad = st.tabs(["🔐 Acessar", "📝 Criar Conta"])
+    
     with tab_login:
-        e_l, s_l = st.text_input("E-mail", key="l_email"), st.text_input("Senha", type="password", key="l_senha")
+        email_l = st.text_input("E-mail", key="l_email")
+        senha_l = st.text_input("Senha", type="password", key="l_senha")
         if st.button("Entrar"):
-            user = conn.execute("SELECT id, nome, status, nivel FROM usuarios WHERE email=? AND senha=?", (e_l, s_l)).fetchone()
-            if user and user[2] == 'Ativo':
-                st.session_state.update({"logado": True, "user_id": user[0], "user_nome": user[1], "user_nivel": user[3]})
-                st.rerun()
-            elif user: st.warning("⚠️ Licença pendente.")
+            user = query_db("SELECT id, nome, status, nivel FROM usuarios WHERE email = :email AND senha = :senha", 
+                            {"email": email_l, "senha": senha_l})
+            if user:
+                user = user[0]
+                if user[2] == 'Ativo':
+                    st.session_state.update({"logado": True, "user_id": user[0], "user_nome": user[1], "user_nivel": user[3]})
+                    st.rerun()
+                else: st.warning("⚠️ Licença pendente.")
             else: st.error("Login inválido.")
+
     with tab_cad:
-        cn, ct, cd, ce, cs = st.text_input("Nome/Razão"), st.radio("Tipo", ["PF", "PJ"]), st.text_input("Doc"), st.text_input("E-mail"), st.text_input("Senha", type="password")
-        if st.button("Solicitar"):
+        cn = st.text_input("Nome/Razão Social", key="cad_nome")
+        ct = st.radio("Tipo", ["PF", "PJ"], horizontal=True, key="cad_tipo")
+        cd = st.text_input("CPF/CNPJ", key="cad_doc")
+        ce = st.text_input("E-mail", key="cad_email")
+        cs = st.text_input("Senha", type="password", key="cad_senha")
+        if st.button("Solicitar Acesso"):
             stus, nvl = ("Ativo", "admin") if ce == "gathergod01@gmail.com" else ("Pendente", "cliente")
             try:
-                conn.execute("INSERT INTO usuarios (nome, email, senha, status, nivel, tipo_pessoa, documento) VALUES (?,?,?,?,?,?,?)", (cn, ce, cs, stus, nvl, ct, cd))
-                conn.commit(); st.success("Enviado!")
-            except: st.error("E-mail já existe.")
+                query_db("INSERT INTO usuarios (nome, email, senha, status, nivel, tipo_pessoa, documento) VALUES (:n, :e, :s, :st, :nv, :tp, :doc)",
+                         {"n": cn, "e": ce, "s": cs, "st": stus, "nv": nvl, "tp": ct, "doc": cd}, commit=True)
+                st.success("✅ Solicitação enviada!")
+            except Exception as ex: st.error(f"Erro: {ex}")
 
 else:
+    # --- APP LOGADO ---
     st.sidebar.title(f"Olá, {st.session_state.user_nome}")
-    menu = st.sidebar.radio("Navegação", ["Configurações", "Lançamentos", "Despesas Recorrentes", "DRE / Dashboard", "👑 Admin" if st.session_state.user_nivel == 'admin' else None])
+    menu = st.sidebar.radio("Navegação", ["Configurações", "Lançamentos", "DRE / Dashboard", "👑 Admin" if st.session_state.user_nivel == 'admin' else None])
 
-    # --- TELA: CONFIGURAÇÕES / LANÇAMENTOS / RECORRENTES (RESUMIDAS PARA FOCO NA DRE) ---
+    # --- TELA: CONFIGURAÇÕES ---
     if menu == "Configurações":
         st.markdown("<h1 class='main-header'>⚙️ Configurações</h1>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
         with c1:
-            n, t = st.text_input("Nome"), st.selectbox("Tipo", ["Receita", "Despesa", "Banco/Caixa"])
+            n = st.text_input("Nome do Item")
+            t = st.selectbox("Tipo", ["Receita", "Despesa", "Banco/Caixa"])
             if st.button("Salvar"):
-                conn.execute("INSERT INTO categorias (user_id, nome, tipo) VALUES (?,?,?)", (st.session_state.user_id, n, 'R' if t=="Receita" else 'D' if t=="Despesa" else 'B'))
-                conn.commit(); st.rerun()
+                tipo_map = {'Receita':'R', 'Despesa':'D', 'Banco/Caixa':'B'}
+                query_db("INSERT INTO categorias (user_id, nome, tipo) VALUES (:uid, :n, :t)", 
+                         {"uid": st.session_state.user_id, "n": n, "t": tipo_map[t]}, commit=True)
+                st.rerun()
         with c2:
-            df_c = pd.read_sql(f"SELECT id, nome, tipo FROM categorias WHERE user_id={st.session_state.user_id}", conn)
+            res = query_db("SELECT id, nome, tipo FROM categorias WHERE user_id = :uid", {"uid": st.session_state.user_id})
+            df_c = pd.DataFrame(res, columns=['id', 'nome', 'tipo']) if res else pd.DataFrame()
             st.dataframe(df_c, use_container_width=True)
             id_del = st.number_input("ID remover", step=1)
             if st.button("Remover"):
-                conn.execute("DELETE FROM categorias WHERE id=? AND user_id=?", (id_del, st.session_state.user_id))
-                conn.commit(); st.rerun()
+                query_db("DELETE FROM categorias WHERE id = :id AND user_id = :uid", {"id": id_del, "uid": st.session_state.user_id}, commit=True)
+                st.rerun()
 
-    elif menu == "Despesas Recorrentes":
-        st.markdown("<h1 class='main-header'>🔄 Contas Recorrentes</h1>", unsafe_allow_html=True)
-        desps = [r[0] for r in conn.execute("SELECT nome FROM categorias WHERE user_id=? AND tipo='D'", (st.session_state.user_id,)).fetchall()]
-        with st.form("rec"):
-            c1, c2 = st.columns(2)
-            desc, dia = c1.text_input("Descrição"), c2.number_input("Dia Vencimento", 1, 31)
-            val, cat = c1.number_input("Valor"), c2.selectbox("Categoria", desps)
-            if st.form_submit_button("Cadastrar"):
-                conn.execute("INSERT INTO recorrencias (user_id, dia_vencimento, categoria, valor, descricao) VALUES (?,?,?,?,?)", (st.session_state.user_id, dia, cat, val, desc))
-                conn.commit(); st.rerun()
-        st.dataframe(pd.read_sql(f"SELECT * FROM recorrencias WHERE user_id={st.session_state.user_id}", conn))
-
+    # --- TELA: LANÇAMENTOS ---
     elif menu == "Lançamentos":
-        st.markdown("<h1 class='main-header'>📝 Lançamentos</h1>", unsafe_allow_html=True)
-        # Lógica de inserção (Mesma da v12)
-        banks = [r[0] for r in conn.execute("SELECT nome FROM categorias WHERE user_id=? AND tipo='B'", (st.session_state.user_id,)).fetchall()]
-        recs = [r[0] for r in conn.execute("SELECT nome FROM categorias WHERE user_id=? AND tipo='R'", (st.session_state.user_id,)).fetchall()]
-        desps = [r[0] for r in conn.execute("SELECT nome FROM categorias WHERE user_id=? AND tipo='D'", (st.session_state.user_id,)).fetchall()]
+        st.markdown("<h1 class='main-header'>📝 Movimentações</h1>", unsafe_allow_html=True)
+        r_cats = query_db("SELECT nome FROM categorias WHERE user_id=:u AND tipo='R'", {"u": st.session_state.user_id})
+        d_cats = query_db("SELECT nome FROM categorias WHERE user_id=:u AND tipo='D'", {"u": st.session_state.user_id})
+        b_cats = query_db("SELECT nome FROM categorias WHERE user_id=:u AND tipo='B'", {"u": st.session_state.user_id})
         
-        t1, t2 = st.tabs(["Lançar", "Histórico/Excluir"])
+        banks = [r[0] for r in b_cats] if b_cats else []
+        recs = [r[0] for r in r_cats] if r_cats else []
+        desps = [r[0] for r in d_cats] if d_cats else []
+
+        t1, t2 = st.tabs(["Lançar", "Histórico"])
         with t1:
-            tp = st.radio("Tipo", ["Comum", "Transferência"], horizontal=True)
-            if tp == "Comum":
+            tp_m = st.radio("Tipo", ["Comum", "Transferência"], horizontal=True)
+            if tp_m == "Comum":
                 c1, c2, c3 = st.columns(3)
-                dt, tl, bl = c1.date_input("Data"), c2.selectbox("Fluxo", ["Receita", "Despesa"]), c3.selectbox("Banco", banks)
+                dt, tl = c1.date_input("Data"), c2.selectbox("Fluxo", ["Receita", "Despesa"])
+                bl = c3.selectbox("Banco", banks)
                 cl = st.selectbox("Categoria", recs if tl=="Receita" else desps)
                 vl, hl = st.number_input("Valor"), st.text_input("Histórico")
-                if st.button("Salvar"):
-                    conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,?,?,?,?,?)", (st.session_state.user_id, str(dt), tl, cl, bl, vl, hl))
-                    conn.commit(); st.rerun()
+                if st.button("Salvar Lançamento"):
+                    query_db("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (:u, :d, :t, :c, :ct, :v, :h)",
+                             {"u": st.session_state.user_id, "d": str(dt), "t": tl, "c": cl, "ct": bl, "v": vl, "h": hl}, commit=True)
+                    st.rerun()
             else:
                 c1, c2, c3 = st.columns(3)
-                dt, ori, dest = c1.date_input("Data"), c2.selectbox("De", banks), c3.selectbox("Para", banks)
-                vt = st.number_input("Valor Transf.")
-                if st.button("Transferir"):
-                    conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,'Despesa','Transferência Interna',?,?,?)", (st.session_state.user_id, str(dt), ori, vt, f"Para {dest}"))
-                    conn.execute("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (?,?,'Receita','Transferência Interna',?,?,?)", (st.session_state.user_id, str(dt), dest, vt, f"De {ori}"))
-                    conn.commit(); st.rerun()
+                dt, ori, dest = c1.date_input("Data"), c2.selectbox("Origem", banks), c3.selectbox("Destino", banks)
+                vt = st.number_input("Valor Transferência")
+                if st.button("Executar Transferência"):
+                    query_db("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (:u, :d, 'Despesa', 'Transferência Interna', :ct, :v, :h)",
+                             {"u": st.session_state.user_id, "d": str(dt), "ct": ori, "v": vt, "h": f"Para {dest}"}, commit=True)
+                    query_db("INSERT INTO lancamentos (user_id, data, tipo, categoria, conta, valor, hist) VALUES (:u, :d, 'Receita', 'Transferência Interna', :ct, :v, :h)",
+                             {"u": st.session_state.user_id, "d": str(dt), "ct": dest, "v": vt, "h": f"De {ori}"}, commit=True)
+                    st.rerun()
         with t2:
-            df_h = pd.read_sql(f"SELECT * FROM lancamentos WHERE user_id={st.session_state.user_id} ORDER BY id DESC", conn)
-            st.dataframe(df_h); st.download_button("Exportar CSV", df_h.to_csv(index=False).encode('utf-8'), "financeiro.csv")
-            id_del = st.number_input("ID para excluir", step=1)
+            res_h = query_db("SELECT id, data, tipo, categoria, conta, valor, hist FROM lancamentos WHERE user_id = :u ORDER BY id DESC", {"u": st.session_state.user_id})
+            df_h = pd.DataFrame(res_h, columns=['id', 'data', 'tipo', 'categoria', 'conta', 'valor', 'hist']) if res_h else pd.DataFrame()
+            st.dataframe(df_h)
+            id_ex = st.number_input("ID para excluir", step=1)
             if st.button("Confirmar Exclusão"):
-                conn.execute("DELETE FROM lancamentos WHERE id=?", (id_del,)); conn.commit(); st.rerun()
+                query_db("DELETE FROM lancamentos WHERE id = :id", {"id": id_ex}, commit=True)
+                st.rerun()
 
-    # --- TELA: DRE / DASHBOARD (MELHORADA) ---
+    # --- TELA: DRE / DASHBOARD ---
     elif menu == "DRE / Dashboard":
         st.markdown("<h1 class='main-header'>📊 Inteligência Financeira</h1>", unsafe_allow_html=True)
+        c_f1, c_f2 = st.columns(2)
+        dt_i = c_f1.date_input("Início", value=date(date.today().year, date.today().month, 1))
+        dt_f = c_f2.date_input("Fim", value=date.today())
         
-        # 1. FILTROS E SALDO INICIAL
-        col_f1, col_f2, col_f3 = st.columns([2, 2, 2])
-        dt_i = col_f1.date_input("Data Início", value=date(date.today().year, date.today().month, 1))
-        dt_f = col_f2.date_input("Data Fim", value=date.today())
-        
-        # Cálculo de Saldo Inicial (Tudo antes de dt_i)
-        df_prev = pd.read_sql(f"SELECT tipo, valor, conta FROM lancamentos WHERE user_id={st.session_state.user_id} AND data < '{dt_i}'", conn)
-        saldo_inicial_total = df_prev[df_prev['tipo']=='Receita']['valor'].sum() - df_prev[df_prev['tipo']=='Despesa']['valor'].sum()
-        col_f3.metric("Saldo Inicial (Até esta data)", f"R$ {saldo_inicial_total:,.2f}")
+        # Saldo Inicial
+        prev = query_db("SELECT tipo, valor FROM lancamentos WHERE user_id = :u AND data < :d", {"u": st.session_state.user_id, "d": str(dt_i)})
+        s_ini = sum([float(r[1]) if r[0]=='Receita' else -float(r[1]) for r in prev]) if prev else 0.0
+        st.metric("Saldo Inicial no Período", f"R$ {s_ini:,.2f}")
 
-        # 2. RESULTADO OPERACIONAL (DRE)
-        df_periodo = pd.read_sql(f"SELECT * FROM lancamentos WHERE user_id={st.session_state.user_id} AND data >= '{dt_i}' AND data <= '{dt_f}'", conn)
-        df_dre = df_periodo[df_periodo['categoria'] != 'Transferência Interna']
-        
-        rec_real = df_dre[df_dre['tipo'] == 'Receita']['valor'].sum()
-        des_real = df_dre[df_dre['tipo'] == 'Despesa']['valor'].sum()
-        
-        c_m1, c_m2, c_m3 = st.columns(3)
-        with c_m1: st.markdown(f"<div class='card-resumo'>🟢 RECEITA REAL<br><h3>R$ {rec_real:,.2f}</h3></div>", unsafe_allow_html=True)
-        with c_m2: st.markdown(f"<div class='card-resumo'>🔴 DESPESA REAL<br><h3>R$ {des_real:,.2f}</h3></div>", unsafe_allow_html=True)
-        with c_m3: st.markdown(f"<div class='card-resumo'>💎 LUCRO LÍQUIDO<br><h3>R$ {rec_real - des_real:,.2f}</h3></div>", unsafe_allow_html=True)
-
-        st.markdown("### 📈 Análise de Categorias")
-        if not df_dre.empty:
+        # DRE
+        res_p = query_db("SELECT tipo, valor, categoria, conta, data FROM lancamentos WHERE user_id = :u AND data >= :di AND data <= :df", 
+                         {"u": st.session_state.user_id, "di": str(dt_i), "df": str(dt_f)})
+        if res_p:
+            df_p = pd.DataFrame(res_p, columns=['tipo', 'valor', 'categoria', 'conta', 'data'])
+            df_p['valor'] = df_p['valor'].astype(float)
+            df_dre = df_p[df_p['categoria'] != 'Transferência Interna']
+            rt, dt = df_dre[df_dre['tipo']=='Receita']['valor'].sum(), df_dre[df_dre['tipo']=='Despesa']['valor'].sum()
+            
+            cm1, cm2, cm3 = st.columns(3)
+            with cm1: st.markdown(f"<div class='card-resumo'>🟢 RECEITA<br><h3>R$ {rt:,.2f}</h3></div>", unsafe_allow_html=True)
+            with cm2: st.markdown(f"<div class='card-resumo'>🔴 DESPESA<br><h3>R$ {dt:,.2f}</h3></div>", unsafe_allow_html=True)
+            with cm3: st.markdown(f"<div class='card-resumo'>💎 LUCRO<br><h3>R$ {rt-dt:,.2f}</h3></div>", unsafe_allow_html=True)
+            
             st.bar_chart(df_dre.groupby('categoria')['valor'].sum())
-
-        st.markdown("---")
-
-        # 3. CONTAS A VENCER (NOTIFICAÇÃO)
-        st.markdown("### 📅 Contas a Vencer nos Próximos Dias")
-        dias_venc = st.slider("Ver vencimentos nos próximos (dias):", 1, 30, 7)
-        hoje = date.today()
-        futuro = hoje + timedelta(days=dias_venc)
-        
-        recorrentes = conn.execute("SELECT descricao, valor, dia_vencimento FROM recorrencias WHERE user_id=?", (st.session_state.user_id,)).fetchall()
-        venc_list = []
-        total_a_vencer = 0
-        for r in recorrentes:
-            # Lógica para descobrir se o dia cai no intervalo
-            if hoje.day <= r[2] <= futuro.day or (futuro.month > hoje.month and r[2] <= futuro.day):
-                venc_list.append({"Descrição": r[0], "Valor": r[1], "Dia": r[2]})
-                total_a_vencer += r[1]
-        
-        if venc_list:
-            st.warning(f"Montante Total a Vencer: R$ {total_a_vencer:,.2f}")
-            st.table(pd.DataFrame(venc_list))
-        else: st.success("Nenhuma conta recorrente vencendo no período selecionado.")
-
-        st.markdown("---")
-
-        # 4. FLUXO DE CAIXA DIÁRIO ACUMULADO
-        
-        st.markdown("### 🌊 Fluxo de Caixa Diário Acumulado")
-        banks_list = [r[0] for r in conn.execute("SELECT nome FROM categorias WHERE user_id=? AND tipo='B'", (st.session_state.user_id,)).fetchall()]
-        b_caixa = st.selectbox("Selecione a Conta para ver o Fluxo Diário:", banks_list)
-        
-        if b_caixa:
-            # Saldo inicial específico da conta
-            saldo_ant_banco = df_prev[df_prev['conta']==b_caixa][df_prev['tipo']=='Receita']['valor'].sum() - \
-                              df_prev[df_prev['conta']==b_caixa][df_prev['tipo']=='Despesa']['valor'].sum()
-            
-            df_b = df_periodo[df_periodo['conta'] == b_caixa].copy()
-            df_b['data'] = pd.to_datetime(df_b['data'])
-            
-            # Agrupar por dia
-            diario = df_b.groupby(df_b['data'].dt.date).apply(lambda x: pd.Series({
-                'Entradas': x[x['tipo']=='Receita']['valor'].sum(),
-                'Saídas': x[x['tipo']=='Despesa']['valor'].sum(),
-                'Saldo do Dia': x[x['tipo']=='Receita']['valor'].sum() - x[x['tipo']=='Despesa']['valor'].sum()
-            })).reset_index()
-            
-            diario = diario.sort_values('data')
-            diario['Saldo Acumulado'] = diario['Saldo do Dia'].cumsum() + saldo_ant_banco
-            
-            st.write(f"Saldo Inicial da conta em {dt_i}: **R$ {saldo_ant_banco:,.2f}**")
-            st.dataframe(diario, use_container_width=True)
-            st.line_chart(diario.set_index('data')['Saldo Acumulado'])
+        else: st.info("Sem movimentações no período.")
 
     elif menu == "👑 Admin":
-        st.markdown("<h1>Painel Admin</h1>", unsafe_allow_html=True)
-        u = pd.read_sql("SELECT id, nome, documento, status FROM usuarios", conn)
-        st.table(u)
-        id_a = st.number_input("Ativar ID", step=1)
-        if st.button("Ativar"): conn.execute("UPDATE usuarios SET status='Ativo' WHERE id=?", (id_a,)); conn.commit(); st.rerun()
+        st.markdown("<h1 class='main-header'>👑 Gestão de Licenças</h1>", unsafe_allow_html=True)
+        res_u = query_db("SELECT id, nome, documento, email, status FROM usuarios WHERE nivel = 'cliente'")
+        if res_u:
+            st.table(pd.DataFrame(res_u, columns=['id', 'nome', 'documento', 'email', 'status']))
+            id_a = st.number_input("ID para ativar", step=1)
+            if st.button("Ativar"):
+                query_db("UPDATE usuarios SET status='Ativo' WHERE id=:id", {"id": id_a}, commit=True)
+                st.rerun()
 
-    if st.sidebar.button("🚪 Sair"): st.session_state.clear(); st.rerun()
+    if st.sidebar.button("Sair"): st.session_state.clear(); st.rerun()
