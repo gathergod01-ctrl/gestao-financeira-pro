@@ -8,7 +8,7 @@ st.set_page_config(page_title="Gestão Financeira Gabriel", layout="wide")
 # --- CONEXÃO API SUPABASE ---
 # Lembre-se de manter sua URL e colocar a Key Anon Public correta aqui
 URL_SVP = "https://xtrgfoiyqppqtocuwbqi.supabase.co"
-KEY_SVP = "COLE_AQUI_SUA_CHAVE_ANON_PUBLIC"
+KEY_SVP = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inh0cmdmb2l5cXBwcXRvY3V3YnFpIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMzMTgxMTEsImV4cCI6MjA4ODg5NDExMX0.Cgg41ITX7z-FWs8JVMDz1hC1_6JA7Cma89CKsPNb93k"
 supabase: Client = create_client(URL_SVP, KEY_SVP)
 
 if 'logado' not in st.session_state:
