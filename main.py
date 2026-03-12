@@ -2,25 +2,28 @@ import streamlit as st
 import pandas as pd
 from sqlalchemy import create_engine, text
 from datetime import datetime, date, timedelta
-import smtplib
-from email.mime.text import MIMEText
-from email.mime.multipart import MIMEMultipart
+import urllib.parse
 
 # --- CONFIGURAÇÕES DA PÁGINA ---
 st.set_page_config(page_title="Gestão Financeira Pro", layout="wide", page_icon="📊")
 
-# --- CONEXÃO SUPABASE (POSTGRES) ---
-# Substitua SUA_SENHA_AQUI pela senha que você definiu no projeto do Supabase
-DB_URI = "postgresql://postgres:SUA_SENHA_AQUI@db.xtrgfoiyqppqtocuwbqi.supabase.co:5432/postgres"
-engine = create_engine(DB_URI)
+# --- CONEXÃO COM SUPABASE (GABRIEL) ---
+# Aqui o sistema trata sua senha com caracteres especiais automaticamente
+senha_crua = "@H2obeta77@"
+senha_codificada = urllib.parse.quote_plus(senha_crua)
+
+# Montagem da URI usando o seu host do print
+# Estamos usando o Pooler (Porta 6543) para maior estabilidade
+DB_URI = f"postgresql://postgres.xtrgfoiyqppqtocuwbqi:{senha_codificada}@aws-0-sa-east-1.pooler.supabase.com:6543/postgres"
+
+engine = create_engine(DB_URI, pool_pre_ping=True)
 
 def query_db(sql, params=None, commit=False):
-    """Função mestre para executar comandos no Supabase"""
     with engine.connect() as conn:
         result = conn.execute(text(sql), params or {})
         if commit:
             conn.commit()
-        if result.returns_rows:
+        if result and result.returns_rows:
             return result.fetchall()
         return None
 
@@ -33,7 +36,7 @@ st.markdown("""
     </style>
     """, unsafe_allow_html=True)
 
-# --- LOGIN / SESSÃO ---
+# --- LOGIN / CADASTRO ---
 if 'logado' not in st.session_state:
     st.session_state.logado = False
 
@@ -52,8 +55,8 @@ if not st.session_state.logado:
                 if user[2] == 'Ativo':
                     st.session_state.update({"logado": True, "user_id": user[0], "user_nome": user[1], "user_nivel": user[3]})
                     st.rerun()
-                else: st.warning("⚠️ Licença pendente.")
-            else: st.error("Login inválido.")
+                else: st.warning("⚠️ Licença pendente de aprovação.")
+            else: st.error("Login ou senha inválidos.")
 
     with tab_cad:
         cn = st.text_input("Nome/Razão Social", key="cad_nome")
@@ -66,15 +69,14 @@ if not st.session_state.logado:
             try:
                 query_db("INSERT INTO usuarios (nome, email, senha, status, nivel, tipo_pessoa, documento) VALUES (:n, :e, :s, :st, :nv, :tp, :doc)",
                          {"n": cn, "e": ce, "s": cs, "st": stus, "nv": nvl, "tp": ct, "doc": cd}, commit=True)
-                st.success("✅ Solicitação enviada!")
-            except Exception as ex: st.error(f"Erro: {ex}")
+                st.success("✅ Solicitação enviada com sucesso!")
+            except Exception as ex: st.error(f"Erro ao cadastrar: Verifique se as tabelas foram criadas no Supabase.")
 
 else:
     # --- APP LOGADO ---
-    st.sidebar.title(f"Olá, {st.session_state.user_nome}")
+    st.sidebar.title(f"👋 Olá, {st.session_state.user_nome}")
     menu = st.sidebar.radio("Navegação", ["Configurações", "Lançamentos", "DRE / Dashboard", "👑 Admin" if st.session_state.user_nivel == 'admin' else None])
 
-    # --- TELA: CONFIGURAÇÕES ---
     if menu == "Configurações":
         st.markdown("<h1 class='main-header'>⚙️ Configurações</h1>", unsafe_allow_html=True)
         c1, c2 = st.columns(2)
@@ -95,7 +97,6 @@ else:
                 query_db("DELETE FROM categorias WHERE id = :id AND user_id = :uid", {"id": id_del, "uid": st.session_state.user_id}, commit=True)
                 st.rerun()
 
-    # --- TELA: LANÇAMENTOS ---
     elif menu == "Lançamentos":
         st.markdown("<h1 class='main-header'>📝 Movimentações</h1>", unsafe_allow_html=True)
         r_cats = query_db("SELECT nome FROM categorias WHERE user_id=:u AND tipo='R'", {"u": st.session_state.user_id})
@@ -138,37 +139,27 @@ else:
                 query_db("DELETE FROM lancamentos WHERE id = :id", {"id": id_ex}, commit=True)
                 st.rerun()
 
-    # --- TELA: DRE / DASHBOARD ---
     elif menu == "DRE / Dashboard":
-        st.markdown("<h1 class='main-header'>📊 Inteligência Financeira</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 class='main-header'>📊 Dashboard</h1>", unsafe_allow_html=True)
         c_f1, c_f2 = st.columns(2)
-        dt_i = c_f1.date_input("Início", value=date(date.today().year, date.today().month, 1))
-        dt_f = c_f2.date_input("Fim", value=date.today())
+        dt_i, dt_f = c_f1.date_input("Início", value=date(date.today().year, date.today().month, 1)), c_f2.date_input("Fim", value=date.today())
         
-        # Saldo Inicial
-        prev = query_db("SELECT tipo, valor FROM lancamentos WHERE user_id = :u AND data < :d", {"u": st.session_state.user_id, "d": str(dt_i)})
-        s_ini = sum([float(r[1]) if r[0]=='Receita' else -float(r[1]) for r in prev]) if prev else 0.0
-        st.metric("Saldo Inicial no Período", f"R$ {s_ini:,.2f}")
-
-        # DRE
         res_p = query_db("SELECT tipo, valor, categoria, conta, data FROM lancamentos WHERE user_id = :u AND data >= :di AND data <= :df", 
                          {"u": st.session_state.user_id, "di": str(dt_i), "df": str(dt_f)})
         if res_p:
             df_p = pd.DataFrame(res_p, columns=['tipo', 'valor', 'categoria', 'conta', 'data'])
             df_p['valor'] = df_p['valor'].astype(float)
-            df_dre = df_p[df_p['categoria'] != 'Transferência Interna']
-            rt, dt = df_dre[df_dre['tipo']=='Receita']['valor'].sum(), df_dre[df_dre['tipo']=='Despesa']['valor'].sum()
+            rt, dt = df_p[df_p['tipo']=='Receita']['valor'].sum(), df_p[df_p['tipo']=='Despesa']['valor'].sum()
             
             cm1, cm2, cm3 = st.columns(3)
             with cm1: st.markdown(f"<div class='card-resumo'>🟢 RECEITA<br><h3>R$ {rt:,.2f}</h3></div>", unsafe_allow_html=True)
             with cm2: st.markdown(f"<div class='card-resumo'>🔴 DESPESA<br><h3>R$ {dt:,.2f}</h3></div>", unsafe_allow_html=True)
             with cm3: st.markdown(f"<div class='card-resumo'>💎 LUCRO<br><h3>R$ {rt-dt:,.2f}</h3></div>", unsafe_allow_html=True)
-            
-            st.bar_chart(df_dre.groupby('categoria')['valor'].sum())
-        else: st.info("Sem movimentações no período.")
+            st.bar_chart(df_p.groupby('categoria')['valor'].sum())
+        else: st.info("Sem dados para o período.")
 
     elif menu == "👑 Admin":
-        st.markdown("<h1 class='main-header'>👑 Gestão de Licenças</h1>", unsafe_allow_html=True)
+        st.markdown("<h1 class='main-header'>👑 Admin</h1>", unsafe_allow_html=True)
         res_u = query_db("SELECT id, nome, documento, email, status FROM usuarios WHERE nivel = 'cliente'")
         if res_u:
             st.table(pd.DataFrame(res_u, columns=['id', 'nome', 'documento', 'email', 'status']))
