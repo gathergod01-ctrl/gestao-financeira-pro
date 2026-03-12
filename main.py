@@ -1,28 +1,26 @@
 import streamlit as st
 import pandas as pd
-import sqlite3
+from sqlalchemy import create_engine, text
 from datetime import datetime, date, timedelta
 
-# --- CONFIGURAÇÕES DA PÁGINA ---
-st.set_page_config(page_title="Gestão Financeira Pro", layout="wide", page_icon="📊")
+# --- CONFIGURAÇÃO DA CONEXÃO (COLE SUA URI AQUI) ---
+# Substitua 'SUA_SENHA_AQUI' pela senha que você criou no Supabase
+DB_URI = "postgresql://postgres:[@H2obeta77@]@db.xtrgfoiyqppqtocuwbqi.supabase.co:5432/postgres"
 
-# --- BANCO DE DADOS ---
-def init_db():
-    conn = sqlite3.connect('financeiro_v13.db', check_same_thread=False)
-    cursor = conn.cursor()
-    cursor.execute('''CREATE TABLE IF NOT EXISTS usuarios 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, nome TEXT, email TEXT UNIQUE, senha TEXT, 
-                       status TEXT, nivel TEXT DEFAULT 'cliente', tipo_pessoa TEXT, documento TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS categorias 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, nome TEXT, tipo TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS lancamentos 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, data TEXT, tipo TEXT, 
-                       categoria TEXT, conta TEXT, valor REAL, hist TEXT)''')
-    cursor.execute('''CREATE TABLE IF NOT EXISTS recorrencias 
-                      (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER, dia_vencimento INTEGER, 
-                       categoria TEXT, valor REAL, descricao TEXT)''')
-    conn.commit()
-    return conn
+# Criamos o "motor" de conexão
+engine = create_engine(DB_URI)
+
+def query_db(sql, params=None, commit=False):
+    with engine.connect() as conn:
+        result = conn.execute(text(sql), params or {})
+        if commit:
+            conn.commit()
+        if result.returns_rows:
+            return result.fetchall()
+        return None
+
+# A partir daqui, o restante do seu código (DRE, Lançamentos, etc) 
+# funcionará usando a função query_db em vez de conn.execute.
 
 conn = init_db()
 
