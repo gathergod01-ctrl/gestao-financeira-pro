@@ -41,15 +41,31 @@ if not st.session_state.logado:
                 else: st.warning("Aguarde ativação do administrador.")
             else: st.error("Login inválido.")
             
-    with t2:
+with t2:
         cn = st.text_input("Nome/Razão", key="c_nome")
         ce = st.text_input("E-mail", key="c_email")
         cs = st.text_input("Senha", type="password", key="c_senha")
         if st.button("Enviar Cadastro", key="btn_c"):
-            stus = "Ativo" if ce == "gathergod01@gmail.com" else "Pendente"
-            nvl = "admin" if ce == "gathergod01@gmail.com" else "cliente"
-            supabase.table("usuarios").insert({"nome": cn, "email": ce, "senha": cs, "status": stus, "nivel": nvl}).execute()
-            st.success("Solicitação enviada!")
+            try:
+                stus = "Ativo" if ce == "gathergod01@gmail.com" else "Pendente"
+                nvl = "admin" if ce == "gathergod01@gmail.com" else "cliente"
+                
+                # Tentativa de inserção com captura de erro detalhada
+                response = supabase.table("usuarios").insert({
+                    "nome": cn, 
+                    "email": ce, 
+                    "senha": cs, 
+                    "status": stus, 
+                    "nivel": nvl
+                }).execute()
+                
+                st.success("✅ Solicitação enviada! Tente logar agora.")
+            except Exception as e:
+                # Se o erro for 'duplicate key', avisamos o usuário
+                if "duplicate key" in str(e).lower():
+                    st.error("❌ Este e-mail já está cadastrado no sistema.")
+                else:
+                    st.error(f"❌ Erro ao salvar no banco: {e}")
 
 else:
     # --- INTERFACE LOGADA ---
